@@ -1,90 +1,112 @@
 import numpy as np
 from enum import Enum
+from collections import Counter
 from ..utils.preprocessing import normalize as preprocess
 from .base import BaseRanker
 
 
 class TFMethod(Enum):
     NORMALIZED = "normalized"
-    BOOLEAN    = "boolean"
-    SUMMATION  = "summation"
+    BOOLEAN = "boolean"
+    SUMMATION = "summation"
     LOG_SCALED = "log_scaled"
 
-    def compute(self, word, document):
+    def compute_vector(self, counts, doc_len):
+        """Computes TF values for a dictionary of {word_idx: count}."""
         if self == TFMethod.NORMALIZED:
-            return document.count(word) / len(document)
+            return {idx: c / doc_len for idx, c in counts.items()}
         elif self == TFMethod.BOOLEAN:
-            return int(word in document)
+            return {idx: 1.0 for idx in counts}
         elif self == TFMethod.SUMMATION:
-            return document.count(word)
+            return {idx: float(c) for idx, c in counts.items()}
         elif self == TFMethod.LOG_SCALED:
-            return np.log10(1 + document.count(word))
-        return None
+            return {idx: np.log10(1 + c) for idx, c in counts.items()}
+        return {}
 
 
 class IDFMethod(Enum):
     STANDARD = "standard"
-    SMOOTHED = "smoothed"   # default — avoids division by zero, always positive
+    SMOOTHED = "smoothed"
 
-    def compute(self, word, corpus):
+    def compute_all(self, df_array, n_docs):
+        """Vectorized computation of all IDF values at once."""
         if self == IDFMethod.STANDARD:
-            n_docs = len(corpus)
-            n_docs_with_word = sum(1 for doc in corpus if word in doc)
-            if n_docs_with_word == 0:
-                return 0
-            return np.log10(n_docs / n_docs_with_word)
+            # Avoid division by zero with np.where
+            return np.log10(n_docs / np.where(df_array > 0, df_array, 1))
         elif self == IDFMethod.SMOOTHED:
-            n_docs = len(corpus) + 1
-            n_docs_with_word = sum(1 for doc in corpus if word in doc) + 1
-            return np.log10(n_docs / n_docs_with_word) + 1
+            return np.log10((n_docs + 1) / (df_array + 1)) + 1
+        return np.zeros_like(df_array)
 
 
 class TFIDFRanker(BaseRanker):
-
     def __init__(self, corpus, tf_method=TFMethod.NORMALIZED, idf_method=IDFMethod.SMOOTHED):
         super().__init__(corpus)
-        self.corpus      = corpus
-        self._tf_method  = tf_method
+        self.corpus = corpus
+        self._tf_method = tf_method
         self._idf_method = idf_method
-        self.tokenized_docs = [preprocess(doc) for doc in corpus]
-        self.matrix, self.word_list, self.word_to_index = self._build_matrix()
 
-    def _tf_idf(self, word, document, tokenized_corpus):
-        """Compute tf-idf using the selected TF and IDF variants."""
-        return self._tf_method.compute(word, document) * self._idf_method.compute(word, tokenized_corpus)
+        # 1. Tokenize once
+        self.tokenized_docs = [preprocess(doc) for doc in corpus]
+
+        # 2. Build Vocabulary mapping
+        unique_words = sorted(list(set(w for doc in self.tokenized_docs for w in doc)))
+        self.word_to_index = {word: i for i, word in enumerate(unique_words)}
+        self.vocab_size = len(unique_words)
+
+        # 3. Build Weight Matrix
+        self.matrix = self._build_matrix()
 
     def _build_matrix(self):
-        """Precompute tf-idf vectors for all documents at index-build time."""
-        word_list     = list(dict.fromkeys(word for doc in self.tokenized_docs for word in doc))
-        word_to_index = {word: i for i, word in enumerate(word_list)}
+        n_docs = len(self.tokenized_docs)
+        if n_docs == 0: return np.array([])
 
-        matrix = []
+        # Calculate Document Frequency (DF) for the whole corpus
+        df_counts = np.zeros(self.vocab_size)
+        doc_counters = []
+
         for doc in self.tokenized_docs:
-            vector = [0.0] * len(word_list)
-            for word in doc:
-                vector[word_to_index[word]] = self._tf_idf(word, doc, self.tokenized_docs)
-            matrix.append(vector)
+            counts = Counter(self.word_to_index[w] for w in doc if w in self.word_to_index)
+            doc_counters.append(counts)
+            for word_idx in counts:
+                df_counts[word_idx] += 1
 
-        return matrix, word_list, word_to_index
+        # Precompute the IDF vector (one value per word in vocab)
+        idf_vector = self._idf_method.compute_all(df_counts, n_docs)
+
+        # Build TF matrix (N_docs x M_vocab)
+        matrix = np.zeros((n_docs, self.vocab_size))
+        for i, counts in enumerate(doc_counters):
+            doc_len = len(self.tokenized_docs[i])
+            if doc_len == 0: continue
+
+            # Use the Enum to get TF scores
+            tf_map = self._tf_method.compute_vector(counts, doc_len)
+            for idx, tf_val in tf_map.items():
+                matrix[i, idx] = tf_val * idf_vector[idx]
+
+        return matrix
 
     def score(self, query):
-        """Return tf-idf scores for all documents."""
+        """Calculates scores using dot product for maximum speed."""
         query_words = preprocess(query)
-        return [
-            sum(
-                doc_vector[self.word_to_index[word]]
-                for word in query_words
-                if word in self.word_to_index
-            )
-            for doc_vector in self.matrix
-        ]
+        query_indices = [self.word_to_index[w] for w in query_words if w in self.word_to_index]
+
+        if not query_indices:
+            return np.zeros(len(self.corpus))
+
+        # Create a binary query vector
+        query_vec = np.zeros(self.vocab_size)
+        query_vec[query_indices] = 1
+
+        # matrix (N x M) dot query_vec (M x 1) -> scores (N x 1)
+        return self.matrix.dot(query_vec)
 
     def rank(self, query, top_n=5):
-        """Return top_n documents ranked by tf-idf score."""
         scores = self.score(query)
-        ranked = sorted(zip(scores, range(len(self.corpus))), reverse=True)
+        # Get indices of top scores efficiently
+        top_indices = np.argsort(scores)[::-1][:top_n]
+
         return [
-            (round(score, 4), self.corpus[doc_idx])
-            for score, doc_idx in ranked[:top_n]
-            if score > 0
+            (round(float(scores[idx]), 4), self.corpus[idx])
+            for idx in top_indices if scores[idx] > 0
         ]
