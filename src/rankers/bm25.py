@@ -55,3 +55,23 @@ class BM25Index(BaseRanker):
             for score, doc_idx in ranked[:top_n]
             if score > 0
         ]
+
+    def score_docs(self, query, docs):
+        """Score an arbitrary list of docs reusing the trained IDF cache and avgdl."""
+        query_tokens = normalize(query)
+        tokenized = [normalize(doc) for doc in docs]
+
+        scores = []
+        for tokens in tokenized:
+            dl = len(tokens)
+            tf_map = Counter(tokens)
+            score = 0.0
+            for word in query_tokens:
+                tf = tf_map.get(word, 0)
+                if tf == 0:
+                    continue
+                idf = self.idf_cache.get(word, 0.0)
+                tf_norm = tf * (self.k + 1) / (tf + self.k * (1 - self.b + self.b * (dl / self.avgdl)))
+                score += idf * (self.delta + tf_norm)
+            scores.append(score)
+        return scores

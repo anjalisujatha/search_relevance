@@ -72,6 +72,7 @@ class TFIDFRanker(BaseRanker):
 
         # Precompute the IDF vector (one value per word in vocab)
         idf_vector = self._idf_method.compute_all(df_counts, n_docs)
+        self.idf_vector = idf_vector  # stored for use in score_docs
 
         # Build TF matrix (N_docs x M_vocab)
         matrix = np.zeros((n_docs, self.vocab_size))
@@ -110,3 +111,23 @@ class TFIDFRanker(BaseRanker):
             (round(float(scores[idx]), 4), self.corpus[idx])
             for idx in top_indices if scores[idx] > 0
         ]
+
+    def score_docs(self, query, docs):
+        """Score an arbitrary list of docs reusing the trained vocabulary and IDF values."""
+        query_words = preprocess(query)
+        query_indices = [self.word_to_index[w] for w in query_words if w in self.word_to_index]
+        if not query_indices:
+            return [0.0] * len(docs)
+
+        scores = []
+        for doc in docs:
+            tokens = preprocess(doc)
+            counts = Counter(self.word_to_index[w] for w in tokens if w in self.word_to_index)
+            doc_len = len(tokens)
+            if doc_len == 0:
+                scores.append(0.0)
+                continue
+            tf_map = self._tf_method.compute_vector(counts, doc_len)
+            score = sum(tf_map.get(idx, 0.0) * self.idf_vector[idx] for idx in query_indices)
+            scores.append(score)
+        return scores
