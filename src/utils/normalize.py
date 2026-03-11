@@ -1,8 +1,14 @@
 import re
+import logging
 import nltk
 from nltk.stem import WordNetLemmatizer
 
-nltk.download('wordnet', quiet=True)
+logger = logging.getLogger(__name__)
+
+try:
+    nltk.data.find("corpora/wordnet")
+except LookupError:
+    nltk.download("wordnet")
 
 lemmatizer = WordNetLemmatizer()
 
@@ -22,5 +28,5 @@ def normalize(text):
         tokens = [lemmatizer.lemmatize(t) for t in text.split() if t not in STOPWORDS]
         return tokens
     except AttributeError:
-        print(f"Not able to normalize text! Got {text}.")
+        logger.warning("normalize() received non-string input: %r", text)
         return []

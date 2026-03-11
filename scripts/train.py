@@ -1,11 +1,12 @@
 """
-Three-stage pipeline:
-  1. fit   – train TF-IDF and BM25 on the training split, pickle model objects
-  2. predict – load pickled models, score every test query's candidate docs
-  3. evaluate – compute NDCG@k from predicted scores vs. ground-truth relevance
+Four-stage pipeline:
+  1. fit      – train TF-IDF and BM25 on the training split, pickle model objects
+  2. load     – load pickled models from disk
+  3. predict  – score every test query's candidate docs
+  4. evaluate – compute NDCG@k from predicted scores vs. ground-truth relevance
 
 Usage:
-    python -m scripts.train            # runs all three stages
+    python -m scripts.train            # runs all stages
     python -m scripts.train --fit      # fit + save only
     python -m scripts.train --predict  # load + predict + evaluate only
 """
@@ -18,6 +19,7 @@ import pandas as pd
 import yaml
 from pathlib import Path
 
+from src.rankers.base import BaseRanker
 from src.rankers.bm25 import BM25Index
 from src.rankers.tf_idf import TFIDFRanker
 
@@ -29,8 +31,14 @@ CONFIG_PATH = ROOT_DIR / "configs" / "train.yaml"
 TFIDF_PATH = MODELS_DIR / "tfidf.pkl"
 BM25_PATH = MODELS_DIR / "bm25.pkl"
 
+SPLIT_TRAIN = "train"
+SPLIT_TEST = "test"
+REQUIRED_COLUMNS = {"split", "clean_query", "clean_product_document", "product_id", "relevance_score", "query_id"}
+
 
 def load_config() -> dict:
+    if not CONFIG_PATH.exists():
+        raise FileNotFoundError(f"Config file not found: {CONFIG_PATH}")
     with open(CONFIG_PATH) as f:
         return yaml.safe_load(f)
 
@@ -39,9 +47,13 @@ def load_config() -> dict:
 # Stage 1 – Fit
 # ---------------------------------------------------------------------------
 
-def fit(train_df: pd.DataFrame) -> tuple[TFIDFRanker, BM25Index]:
+def fit(train_df: pd.DataFrame, overwrite: bool = False) -> tuple[TFIDFRanker, BM25Index]:
     """Fit both rankers on the training corpus and pickle them to MODELS_DIR."""
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
+
+    if not overwrite and TFIDF_PATH.exists() and BM25_PATH.exists():
+        print("  Models already exist. Use --overwrite to retrain.")
+        return load_models()
 
     corpus = train_df["clean_product_document"].dropna().unique().tolist()
     print(f"  Training corpus: {len(corpus):,} unique documents")
@@ -86,7 +98,7 @@ def load_models() -> tuple[TFIDFRanker, BM25Index]:
     return tfidf, bm25
 
 
-def predict(ranker, test_df: pd.DataFrame, model_name: str) -> pd.DataFrame:
+def predict(ranker: BaseRanker, test_df: pd.DataFrame, model_name: str) -> pd.DataFrame:
     """
     Score every test query's candidate documents.
 
@@ -99,13 +111,13 @@ def predict(ranker, test_df: pd.DataFrame, model_name: str) -> pd.DataFrame:
         docs = group["clean_product_document"].tolist()
         scores = ranker.score_docs(query, docs)
 
-        for (_, row), score in zip(group.iterrows(), scores):
+        for product_id, relevance_score, score in zip(group["product_id"], group["relevance_score"], scores):
             records.append({
                 "model": model_name,
                 "query_id": query_id,
-                "product_id": row["product_id"],
+                "product_id": product_id,
                 "predicted_score": score,
-                "relevance_score": row["relevance_score"],
+                "relevance_score": relevance_score,
             })
 
     return pd.DataFrame(records)
@@ -154,7 +166,7 @@ def evaluate(predictions_df: pd.DataFrame, k: int = 10) -> pd.DataFrame:
 # Orchestration
 # ---------------------------------------------------------------------------
 
-def run(do_fit: bool = True, do_predict: bool = True):
+def run(do_fit: bool = True, do_predict: bool = True, overwrite: bool = False):
     cfg = load_config()
     dataset_path = ROOT_DIR / cfg["data"]["dataset_path"]
     train_size = cfg["sampling"]["train_size"]
@@ -164,13 +176,19 @@ def run(do_fit: bool = True, do_predict: bool = True):
     print(f"Loading dataset from {dataset_path} ...")
     df = pd.read_csv(dataset_path)
 
-    train_df = df[df["split"] == "train"].sample(n=min(train_size, len(df[df["split"] == "train"])), random_state=42).reset_index(drop=True)
-    test_df = df[df["split"] == "test"].sample(n=min(test_size, len(df[df["split"] == "test"])), random_state=42).reset_index(drop=True)
+    missing = REQUIRED_COLUMNS - set(df.columns)
+    if missing:
+        raise ValueError(f"Dataset is missing required columns: {missing}")
+
+    train_pool = df[df["split"] == SPLIT_TRAIN]
+    test_pool = df[df["split"] == SPLIT_TEST]
+    train_df = train_pool.sample(n=min(train_size, len(train_pool)), random_state=42).reset_index(drop=True)
+    test_df = test_pool.sample(n=min(test_size, len(test_pool)), random_state=42).reset_index(drop=True)
     print(f"  Train rows: {len(train_df):,}  |  Test rows: {len(test_df):,}")
 
     if do_fit:
         print("\n[Stage 1] Fitting models ...")
-        fit(train_df)
+        fit(train_df, overwrite=overwrite)
 
     if do_predict:
         print("\n[Stage 2] Loading models ...")
@@ -181,7 +199,7 @@ def run(do_fit: bool = True, do_predict: bool = True):
         preds_bm25 = predict(bm25, test_df, model_name="bm25")
         all_preds = pd.concat([preds_tfidf, preds_bm25], ignore_index=True)
 
-        print(f"\n[Stage 3] Evaluating (NDCG@{k}) ...")
+        print(f"\n[Stage 4] Evaluating (NDCG@{k}) ...")
         summary = evaluate(all_preds, k=k)
         print(summary.to_string(index=False))
         return summary
@@ -189,16 +207,16 @@ def run(do_fit: bool = True, do_predict: bool = True):
     return None
 
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--fit", action="store_true", help="Fit and save models only")
     parser.add_argument("--predict", action="store_true", help="Load models, predict and evaluate only")
+    parser.add_argument("--overwrite", action="store_true", help="Overwrite existing model files")
     args = parser.parse_args()
 
     if args.fit:
-        run(do_fit=True, do_predict=False)
+        run(do_fit=True, do_predict=False, overwrite=args.overwrite)
     elif args.predict:
-        run(do_fit=False, do_predict=True)
+        run(do_fit=False, do_predict=True, overwrite=args.overwrite)
     else:
-        run(do_fit=True, do_predict=True)
+        run(do_fit=True, do_predict=True, overwrite=args.overwrite)

@@ -11,15 +11,15 @@ class BM25Index(BaseRanker):
         self.k = k
         self.b = b
         self.delta = delta
-        self.corpus = corpus
         self.N = len(corpus)
 
         # Precompute tokenized docs once at index-build time
         self.tokenized_docs = [normalize(doc) for doc in corpus]
 
-        # Precompute doc lengths and avgdl
+        # Precompute doc lengths, avgdl, and per-doc term counters
         self.doc_lengths = [len(doc) for doc in self.tokenized_docs]
-        self.avgdl = sum(self.doc_lengths) / self.N
+        self.avgdl = sum(self.doc_lengths) / self.N if self.N > 0 else 0
+        self.doc_counters = [Counter(doc) for doc in self.tokenized_docs]
 
         # Build vocabulary and precompute IDF for every term
         vocab = set(w for doc in self.tokenized_docs for w in doc)
@@ -30,7 +30,7 @@ class BM25Index(BaseRanker):
         return float(np.log((self.N - doc_freq + 0.5) / (doc_freq + 0.5) + 1))
 
     def _score_term(self, word, doc_idx):
-        tf = Counter(self.tokenized_docs[doc_idx]).get(word, 0)
+        tf = self.doc_counters[doc_idx].get(word, 0)
         if tf == 0 or self.avgdl == 0:
             return 0.0
 
@@ -55,7 +55,6 @@ class BM25Index(BaseRanker):
         return [
             (round(score, 4), self.corpus[doc_idx])
             for score, doc_idx in ranked[:top_n]
-            if score > 0
         ]
 
     def score_docs(self, query, docs):

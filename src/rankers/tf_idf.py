@@ -41,7 +41,6 @@ class IDFMethod(Enum):
 class TFIDFRanker(BaseRanker):
     def __init__(self, corpus, tf_method=TFMethod.NORMALIZED, idf_method=IDFMethod.SMOOTHED):
         super().__init__(corpus)
-        self.corpus = corpus
         self._tf_method = tf_method
         self._idf_method = idf_method
 
@@ -105,12 +104,16 @@ class TFIDFRanker(BaseRanker):
 
     def rank(self, query, top_n=5):
         scores = self.score(query)
-        # Get indices of top scores efficiently
-        top_indices = np.argsort(scores)[::-1][:top_n]
+        n = len(scores)
+        if n <= top_n:
+            top_indices = np.argsort(scores)[::-1]
+        else:
+            part = np.argpartition(scores, -top_n)[-top_n:]
+            top_indices = part[np.argsort(scores[part])[::-1]]
 
         return [
             (round(float(scores[idx]), 4), self.corpus[idx])
-            for idx in top_indices if scores[idx] > 0
+            for idx in top_indices
         ]
 
     def score_docs(self, query, docs):

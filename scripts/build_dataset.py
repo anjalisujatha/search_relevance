@@ -11,19 +11,15 @@ Output: data/processed/shopping_queries_dataset_final.csv with columns:
 import re
 import html
 import pandas as pd
-import nltk
-from nltk.stem import WordNetLemmatizer
 from pathlib import Path
 
-from src.utils import normalize
-nltk.download('wordnet', quiet=True)
+from src.utils.normalize import lemmatizer, STOPWORDS
 
 ROOT_DIR = Path(__file__).parent.parent
 RAW_DIR = ROOT_DIR / "data" / "raw"
 PROCESSED_DIR = ROOT_DIR / "data" / "processed"
 
-lemmatizer = WordNetLemmatizer()
-
+# ESCI relevance label mapping: Exact=1.0, Substitute=0.6, Irrelevant=0.1, Complement=0.0
 RELEVANCE_MAP = {
     'e': 1.0,
     's': 0.6,
@@ -38,7 +34,7 @@ def clean_text(text):
     text = text.lower()
     text = re.sub(r'[^a-z0-9\s]', ' ', text)
     text = re.sub(r'\s+', ' ', text).strip()
-    tokens = [lemmatizer.lemmatize(t) for t in text.split() if t not in normalize.STOPWORDS]
+    tokens = [lemmatizer.lemmatize(t) for t in text.split() if t not in STOPWORDS]
     return ' '.join(tokens)
 
 
