@@ -1,7 +1,7 @@
 import numpy as np
 from enum import Enum
 from collections import Counter
-from ..utils.preprocessing import normalize as preprocess
+from ..utils.normalize import normalize as preprocess
 from .base import BaseRanker
 
 
@@ -58,7 +58,8 @@ class TFIDFRanker(BaseRanker):
 
     def _build_matrix(self):
         n_docs = len(self.tokenized_docs)
-        if n_docs == 0: return np.array([])
+        if n_docs == 0:
+            return np.empty((0,0))
 
         # Calculate Document Frequency (DF) for the whole corpus
         df_counts = np.zeros(self.vocab_size)

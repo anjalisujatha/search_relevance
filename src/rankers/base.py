@@ -28,6 +28,7 @@ class BaseRanker(ABC):
             List of (score, document) tuples sorted highest to lowest.
         """
 
+    @abstractmethod
     def score_docs(self, query, docs):
         """Score an arbitrary list of documents against a query.
 

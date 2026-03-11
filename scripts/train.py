@@ -1,32 +1,38 @@
 """
-pipeline.py
-
 Three-stage pipeline:
   1. fit   – train TF-IDF and BM25 on the training split, pickle model objects
   2. predict – load pickled models, score every test query's candidate docs
   3. evaluate – compute NDCG@k from predicted scores vs. ground-truth relevance
 
 Usage:
-    python -m src.pipeline            # runs all three stages
-    python -m src.pipeline --fit      # fit + save only
-    python -m src.pipeline --predict  # load + predict + evaluate only
+    python -m scripts.train            # runs all three stages
+    python -m scripts.train --fit      # fit + save only
+    python -m scripts.train --predict  # load + predict + evaluate only
 """
 
 import argparse
 import pickle
+import time
 import numpy as np
 import pandas as pd
+import yaml
 from pathlib import Path
 
 from src.rankers.bm25 import BM25Index
 from src.rankers.tf_idf import TFIDFRanker
 
-DATA_DIR = Path(__file__).parent.parent / "data"
+ROOT_DIR = Path(__file__).parent.parent
+DATA_DIR = ROOT_DIR / "data"
 MODELS_DIR = DATA_DIR / "models"
-DATASET_PATH = DATA_DIR / "shopping_queries_dataset_final.csv"
+CONFIG_PATH = ROOT_DIR / "configs" / "train.yaml"
 
 TFIDF_PATH = MODELS_DIR / "tfidf.pkl"
 BM25_PATH = MODELS_DIR / "bm25.pkl"
+
+
+def load_config() -> dict:
+    with open(CONFIG_PATH) as f:
+        return yaml.safe_load(f)
 
 
 # ---------------------------------------------------------------------------
@@ -41,10 +47,14 @@ def fit(train_df: pd.DataFrame) -> tuple[TFIDFRanker, BM25Index]:
     print(f"  Training corpus: {len(corpus):,} unique documents")
 
     print("  Fitting TF-IDF ...")
+    t0 = time.time()
     tfidf = TFIDFRanker(corpus)
+    print(f"  TF-IDF trained in {time.time() - t0:.2f}s")
 
     print("  Fitting BM25 ...")
+    t0 = time.time()
     bm25 = BM25Index(corpus)
+    print(f"  BM25 trained in {time.time() - t0:.2f}s")
 
     with open(TFIDF_PATH, "wb") as f:
         pickle.dump(tfidf, f)
@@ -144,12 +154,18 @@ def evaluate(predictions_df: pd.DataFrame, k: int = 10) -> pd.DataFrame:
 # Orchestration
 # ---------------------------------------------------------------------------
 
-def run(do_fit: bool = True, do_predict: bool = True, k: int = 10):
-    print(f"Loading dataset from {DATASET_PATH} ...")
-    df = pd.read_csv(DATASET_PATH)
+def run(do_fit: bool = True, do_predict: bool = True):
+    cfg = load_config()
+    dataset_path = ROOT_DIR / cfg["data"]["dataset_path"]
+    train_size = cfg["sampling"]["train_size"]
+    test_size = cfg["sampling"]["test_size"]
+    k = cfg["evaluation"]["k"]
 
-    train_df = df[df["split"] == "train"]
-    test_df = df[df["split"] == "test"]
+    print(f"Loading dataset from {dataset_path} ...")
+    df = pd.read_csv(dataset_path)
+
+    train_df = df[df["split"] == "train"].sample(n=min(train_size, len(df[df["split"] == "train"])), random_state=42).reset_index(drop=True)
+    test_df = df[df["split"] == "test"].sample(n=min(test_size, len(df[df["split"] == "test"])), random_state=42).reset_index(drop=True)
     print(f"  Train rows: {len(train_df):,}  |  Test rows: {len(test_df):,}")
 
     if do_fit:
@@ -160,7 +176,7 @@ def run(do_fit: bool = True, do_predict: bool = True, k: int = 10):
         print("\n[Stage 2] Loading models ...")
         tfidf, bm25 = load_models()
 
-        print("\n[Stage 2] Running predictions on test split ...")
+        print("\n[Stage 3] Running predictions on test split ...")
         preds_tfidf = predict(tfidf, test_df, model_name="tfidf")
         preds_bm25 = predict(bm25, test_df, model_name="bm25")
         all_preds = pd.concat([preds_tfidf, preds_bm25], ignore_index=True)
@@ -171,6 +187,7 @@ def run(do_fit: bool = True, do_predict: bool = True, k: int = 10):
         return summary
 
     return None
+
 
 
 if __name__ == "__main__":

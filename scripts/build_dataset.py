@@ -1,8 +1,10 @@
 """
 build_dataset.py
 
-Builds the cleaned dataset from raw parquet files and saves it to data/.
-Output: data/shopping_queries_dataset_final.csv with columns:
+Builds the cleaned dataset from raw parquet files and saves it to data/processed/.
+Input:  data/raw/shopping_queries_dataset_examples.parquet
+        data/raw/shopping_queries_dataset_products.parquet
+Output: data/processed/shopping_queries_dataset_final.csv with columns:
     query_id, product_id, clean_query, clean_product_document, relevance_score, split
 """
 
@@ -13,15 +15,12 @@ import nltk
 from nltk.stem import WordNetLemmatizer
 from pathlib import Path
 
+from src.utils import normalize
 nltk.download('wordnet', quiet=True)
 
-DATA_DIR = Path(__file__).parent.parent / "data"
-
-STOPWORDS = {
-    'i', 'me', 'my', 'a', 'an', 'the', 'and', 'or', 'but', 'are',
-    'is', 'was', 'to', 'of', 'in', 'it', 'its', 'this', 'that',
-    'for', 'on', 'at', 'be', 'by', 'as', 'up', 'do', 'so', 'if', 's'
-}
+ROOT_DIR = Path(__file__).parent.parent
+RAW_DIR = ROOT_DIR / "data" / "raw"
+PROCESSED_DIR = ROOT_DIR / "data" / "processed"
 
 lemmatizer = WordNetLemmatizer()
 
@@ -39,14 +38,14 @@ def clean_text(text):
     text = text.lower()
     text = re.sub(r'[^a-z0-9\s]', ' ', text)
     text = re.sub(r'\s+', ' ', text).strip()
-    tokens = [lemmatizer.lemmatize(t) for t in text.split() if t not in STOPWORDS]
+    tokens = [lemmatizer.lemmatize(t) for t in text.split() if t not in normalize.STOPWORDS]
     return ' '.join(tokens)
 
 
 def build():
     print("Loading raw data...")
-    data_examples = pd.read_parquet(DATA_DIR / "shopping_queries_dataset_examples.parquet")
-    data_products = pd.read_parquet(DATA_DIR / "shopping_queries_dataset_products.parquet")
+    data_examples = pd.read_parquet(RAW_DIR / "shopping_queries_dataset_examples.parquet")
+    data_products = pd.read_parquet(RAW_DIR / "shopping_queries_dataset_products.parquet")
 
     print("Merging examples and products...")
     df = pd.merge(
@@ -87,7 +86,8 @@ def build():
         'split',
     ]].copy()
 
-    output_path = DATA_DIR / "shopping_queries_dataset_final.csv"
+    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+    output_path = PROCESSED_DIR / "shopping_queries_dataset_final.csv"
     df_final.to_csv(output_path, index=False)
     print(f"Saved {len(df_final)} rows to {output_path}")
 

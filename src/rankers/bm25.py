@@ -1,7 +1,7 @@
 import numpy as np
 from collections import Counter
 
-from ..utils.preprocessing import normalize
+from ..utils.normalize import normalize
 from .base import BaseRanker
 
 
@@ -31,11 +31,13 @@ class BM25Index(BaseRanker):
 
     def _score_term(self, word, doc_idx):
         tf = Counter(self.tokenized_docs[doc_idx]).get(word, 0)
-        if tf == 0:
+        if tf == 0 or self.avgdl == 0:
             return 0.0
+
         dl = self.doc_lengths[doc_idx]
         tf_norm = tf * (self.k + 1) / (tf + self.k * (1 - self.b + self.b * (dl / self.avgdl)))
         idf = self.idf_cache.get(word, 0.0)
+
         return idf * (self.delta + tf_norm)
 
     def score(self, query):
@@ -66,9 +68,10 @@ class BM25Index(BaseRanker):
             dl = len(tokens)
             tf_map = Counter(tokens)
             score = 0.0
+
             for word in query_tokens:
                 tf = tf_map.get(word, 0)
-                if tf == 0:
+                if tf == 0 or self.avgdl == 0:
                     continue
                 idf = self.idf_cache.get(word, 0.0)
                 tf_norm = tf * (self.k + 1) / (tf + self.k * (1 - self.b + self.b * (dl / self.avgdl)))
