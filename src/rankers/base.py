@@ -27,3 +27,19 @@ class BaseRanker(ABC):
         Returns:
             List of (score, document) tuples sorted highest to lowest.
         """
+
+    def score_docs(self, query, docs):
+        """Score an arbitrary list of documents against a query.
+
+        Used during evaluation to score only a query's candidate set.
+        Subclasses should override this to reuse trained parameters (IDF, avgdl)
+        instead of rebuilding the index from scratch.
+
+        Args:
+            query : raw query string
+            docs  : list of document strings to score
+
+        Returns:
+            List of floats, one score per document.
+        """
+        raise NotImplementedError
