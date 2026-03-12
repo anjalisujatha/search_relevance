@@ -8,10 +8,11 @@ Output: data/processed/shopping_queries_dataset_final.csv with columns:
     query_id, product_id, clean_query, clean_product_document, relevance_score, split
 """
 
-import re
 import html
-import pandas as pd
+import re
 from pathlib import Path
+
+import pandas as pd
 
 from src.utils.normalize import lemmatizer, STOPWORDS
 
@@ -29,6 +30,7 @@ RELEVANCE_MAP = {
 
 
 def clean_text(text):
+    """Unescape HTML, strip tags, lowercase, remove punctuation, and lemmatize."""
     text = html.unescape(str(text))
     text = re.sub(r'<.*?>|&nbsp;', ' ', text)
     text = text.lower()
@@ -39,6 +41,7 @@ def clean_text(text):
 
 
 def build():
+    """Load raw parquet files, clean text, and save the processed dataset."""
     print("Loading raw data...")
     data_examples = pd.read_parquet(RAW_DIR / "shopping_queries_dataset_examples.parquet")
     data_products = pd.read_parquet(RAW_DIR / "shopping_queries_dataset_products.parquet")
@@ -56,7 +59,10 @@ def build():
     df = df[df['product_locale'] == 'us'].copy()
 
     print("Building product documents...")
-    for col in ['product_title', 'product_description', 'product_bullet_point', 'product_brand', 'product_color']:
+    for col in [
+        'product_title', 'product_description', 'product_bullet_point',
+        'product_brand', 'product_color'
+    ]:
         df[col] = df[col].fillna('')
 
     df['product_document'] = (

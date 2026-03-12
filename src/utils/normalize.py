@@ -1,3 +1,5 @@
+"""Text normalization utilities for tokenizing and cleaning query/document strings."""
+
 import re
 import logging
 import nltk
@@ -8,7 +10,7 @@ logger = logging.getLogger(__name__)
 try:
     nltk.data.find("corpora/wordnet")
 except LookupError:
-    nltk.download("wordnet")
+    nltk.download("wordnet", quiet=True)
 
 lemmatizer = WordNetLemmatizer()
 

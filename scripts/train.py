@@ -14,10 +14,11 @@ Usage:
 import argparse
 import pickle
 import time
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import yaml
-from pathlib import Path
 
 from src.rankers.base import BaseRanker
 from src.rankers.bm25 import BM25Index
@@ -33,13 +34,17 @@ BM25_PATH = MODELS_DIR / "bm25.pkl"
 
 SPLIT_TRAIN = "train"
 SPLIT_TEST = "test"
-REQUIRED_COLUMNS = {"split", "clean_query", "clean_product_document", "product_id", "relevance_score", "query_id"}
+REQUIRED_COLUMNS = {
+    "split", "clean_query", "clean_product_document",
+    "product_id", "relevance_score", "query_id",
+}
 
 
 def load_config() -> dict:
+    """Load and return the YAML training config."""
     if not CONFIG_PATH.exists():
         raise FileNotFoundError(f"Config file not found: {CONFIG_PATH}")
-    with open(CONFIG_PATH) as f:
+    with open(CONFIG_PATH, encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 
@@ -47,7 +52,7 @@ def load_config() -> dict:
 # Stage 1 – Fit
 # ---------------------------------------------------------------------------
 
-def fit(train_df: pd.DataFrame, overwrite: bool = False) -> tuple[TFIDFRanker, BM25Index]:
+def fit(train_df: pd.DataFrame, overwrite: bool = False) -> tuple:
     """Fit both rankers on the training corpus and pickle them to MODELS_DIR."""
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -80,10 +85,10 @@ def fit(train_df: pd.DataFrame, overwrite: bool = False) -> tuple[TFIDFRanker, B
 
 
 # ---------------------------------------------------------------------------
-# Stage 2 – Predict
+# Stage 2 – Load and Predict
 # ---------------------------------------------------------------------------
 
-def load_models() -> tuple[TFIDFRanker, BM25Index]:
+def load_models() -> tuple:
     """Load pickled rankers from disk."""
     if not TFIDF_PATH.exists() or not BM25_PATH.exists():
         raise FileNotFoundError(
@@ -111,7 +116,9 @@ def predict(ranker: BaseRanker, test_df: pd.DataFrame, model_name: str) -> pd.Da
         docs = group["clean_product_document"].tolist()
         scores = ranker.score_docs(query, docs)
 
-        for product_id, relevance_score, score in zip(group["product_id"], group["relevance_score"], scores):
+        for product_id, relevance_score, score in zip(
+            group["product_id"], group["relevance_score"], scores
+        ):
             records.append({
                 "model": model_name,
                 "query_id": query_id,
@@ -149,7 +156,7 @@ def evaluate(predictions_df: pd.DataFrame, k: int = 10) -> pd.DataFrame:
     results = []
     for model_name, model_preds in predictions_df.groupby("model"):
         ndcg_scores = []
-        for query_id, group in model_preds.groupby("query_id"):
+        for _, group in model_preds.groupby("query_id"):
             ndcg_scores.append(
                 _ndcg_at_k(
                     group["predicted_score"].values,
@@ -166,7 +173,8 @@ def evaluate(predictions_df: pd.DataFrame, k: int = 10) -> pd.DataFrame:
 # Orchestration
 # ---------------------------------------------------------------------------
 
-def run(do_fit: bool = True, do_predict: bool = True, overwrite: bool = False):
+def run(do_fit: bool = True, do_predict: bool = True, overwrite: bool = False):  # pylint: disable=too-many-locals
+    """Load data, optionally fit models, run predictions, and evaluate."""
     cfg = load_config()
     dataset_path = ROOT_DIR / cfg["data"]["dataset_path"]
     train_size = cfg["sampling"]["train_size"]
@@ -182,8 +190,12 @@ def run(do_fit: bool = True, do_predict: bool = True, overwrite: bool = False):
 
     train_pool = df[df["split"] == SPLIT_TRAIN]
     test_pool = df[df["split"] == SPLIT_TEST]
-    train_df = train_pool.sample(n=min(train_size, len(train_pool)), random_state=42).reset_index(drop=True)
-    test_df = test_pool.sample(n=min(test_size, len(test_pool)), random_state=42).reset_index(drop=True)
+    train_df = train_pool.sample(
+        n=min(train_size, len(train_pool)), random_state=42
+    ).reset_index(drop=True)
+    test_df = test_pool.sample(
+        n=min(test_size, len(test_pool)), random_state=42
+    ).reset_index(drop=True)
     print(f"  Train rows: {len(train_df):,}  |  Test rows: {len(test_df):,}")
 
     if do_fit:
@@ -194,12 +206,12 @@ def run(do_fit: bool = True, do_predict: bool = True, overwrite: bool = False):
         print("\n[Stage 2] Loading models ...")
         tfidf, bm25 = load_models()
 
-        print("\n[Stage 3] Running predictions on test split ...")
+        print("\n[Stage 2] Running predictions on test split ...")
         preds_tfidf = predict(tfidf, test_df, model_name="tfidf")
         preds_bm25 = predict(bm25, test_df, model_name="bm25")
         all_preds = pd.concat([preds_tfidf, preds_bm25], ignore_index=True)
 
-        print(f"\n[Stage 4] Evaluating (NDCG@{k}) ...")
+        print(f"\n[Stage 3] Evaluating (NDCG@{k}) ...")
         summary = evaluate(all_preds, k=k)
         print(summary.to_string(index=False))
         return summary
@@ -210,7 +222,9 @@ def run(do_fit: bool = True, do_predict: bool = True, overwrite: bool = False):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--fit", action="store_true", help="Fit and save models only")
-    parser.add_argument("--predict", action="store_true", help="Load models, predict and evaluate only")
+    parser.add_argument(
+        "--predict", action="store_true", help="Load models, predict and evaluate only"
+    )
     parser.add_argument("--overwrite", action="store_true", help="Overwrite existing model files")
     args = parser.parse_args()
 
