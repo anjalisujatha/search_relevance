@@ -1,4 +1,5 @@
 import numpy as np
+import scipy.sparse as sp
 from enum import Enum
 from collections import Counter
 from ..utils.normalize import normalize as preprocess
@@ -58,7 +59,7 @@ class TFIDFRanker(BaseRanker):
     def _build_matrix(self):
         n_docs = len(self.tokenized_docs)
         if n_docs == 0:
-            return np.empty((0,0))
+            return sp.csr_matrix((0, 0))
 
         # Calculate Document Frequency (DF) for the whole corpus
         df_counts = np.zeros(self.vocab_size)
@@ -74,18 +75,19 @@ class TFIDFRanker(BaseRanker):
         idf_vector = self._idf_method.compute_all(df_counts, n_docs)
         self.idf_vector = idf_vector  # stored for use in score_docs
 
-        # Build TF matrix (N_docs x M_vocab)
-        matrix = np.zeros((n_docs, self.vocab_size))
+        # Build sparse TF-IDF matrix (N_docs x M_vocab)
+        rows, cols, vals = [], [], []
         for i, counts in enumerate(doc_counters):
             doc_len = len(self.tokenized_docs[i])
-            if doc_len == 0: continue
-
-            # Use the Enum to get TF scores
+            if doc_len == 0:
+                continue
             tf_map = self._tf_method.compute_vector(counts, doc_len)
             for idx, tf_val in tf_map.items():
-                matrix[i, idx] = tf_val * idf_vector[idx]
+                rows.append(i)
+                cols.append(idx)
+                vals.append(tf_val * idf_vector[idx])
 
-        return matrix
+        return sp.csr_matrix((vals, (rows, cols)), shape=(n_docs, self.vocab_size))
 
     def score(self, query):
         """Calculates scores using dot product for maximum speed."""
@@ -99,8 +101,8 @@ class TFIDFRanker(BaseRanker):
         query_vec = np.zeros(self.vocab_size)
         query_vec[query_indices] = 1
 
-        # matrix (N x M) dot query_vec (M x 1) -> scores (N x 1)
-        return self.matrix.dot(query_vec)
+        # sparse matrix (N x M) dot query_vec (M,) -> scores (N,)
+        return np.asarray(self.matrix.dot(query_vec)).flatten()
 
     def rank(self, query, top_n=5):
         scores = self.score(query)

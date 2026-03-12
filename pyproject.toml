@@ -12,6 +12,7 @@ dependencies = [
     "nltk",
     "matplotlib",
     "pyyaml",
+    "scipy",
 ]
 
 [tool.setuptools.packages.find]
