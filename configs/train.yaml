@@ -1,0 +1,9 @@
+data:
+  dataset_path: data/processed/shopping_queries_dataset_final.csv
+
+sampling:
+  train_size: 10000
+  test_size: 1000
+
+evaluation:
+  k: 10

@@ -1,11 +1,18 @@
-import numpy as np
-from enum import Enum
+"""TF-IDF ranking model using a sparse matrix representation."""
+
 from collections import Counter
-from ..utils.preprocessing import normalize as preprocess
+from enum import Enum
+
+import numpy as np
+import scipy.sparse as sp
+
+from ..utils.normalize import normalize as preprocess
 from .base import BaseRanker
 
 
 class TFMethod(Enum):
+    """Supported term-frequency weighting schemes."""
+
     NORMALIZED = "normalized"
     BOOLEAN = "boolean"
     SUMMATION = "summation"
@@ -15,16 +22,18 @@ class TFMethod(Enum):
         """Computes TF values for a dictionary of {word_idx: count}."""
         if self == TFMethod.NORMALIZED:
             return {idx: c / doc_len for idx, c in counts.items()}
-        elif self == TFMethod.BOOLEAN:
+        if self == TFMethod.BOOLEAN:
             return {idx: 1.0 for idx in counts}
-        elif self == TFMethod.SUMMATION:
+        if self == TFMethod.SUMMATION:
             return {idx: float(c) for idx, c in counts.items()}
-        elif self == TFMethod.LOG_SCALED:
+        if self == TFMethod.LOG_SCALED:
             return {idx: np.log10(1 + c) for idx, c in counts.items()}
         return {}
 
 
 class IDFMethod(Enum):
+    """Supported inverse-document-frequency weighting schemes."""
+
     STANDARD = "standard"
     SMOOTHED = "smoothed"
 
@@ -33,15 +42,16 @@ class IDFMethod(Enum):
         if self == IDFMethod.STANDARD:
             # Avoid division by zero with np.where
             return np.log10(n_docs / np.where(df_array > 0, df_array, 1))
-        elif self == IDFMethod.SMOOTHED:
+        if self == IDFMethod.SMOOTHED:
             return np.log10((n_docs + 1) / (df_array + 1)) + 1
         return np.zeros_like(df_array)
 
 
 class TFIDFRanker(BaseRanker):
+    """TF-IDF ranker backed by a sparse CSR weight matrix."""
+
     def __init__(self, corpus, tf_method=TFMethod.NORMALIZED, idf_method=IDFMethod.SMOOTHED):
         super().__init__(corpus)
-        self.corpus = corpus
         self._tf_method = tf_method
         self._idf_method = idf_method
 
@@ -49,7 +59,7 @@ class TFIDFRanker(BaseRanker):
         self.tokenized_docs = [preprocess(doc) for doc in corpus]
 
         # 2. Build Vocabulary mapping
-        unique_words = sorted(list(set(w for doc in self.tokenized_docs for w in doc)))
+        unique_words = sorted(set(w for doc in self.tokenized_docs for w in doc))
         self.word_to_index = {word: i for i, word in enumerate(unique_words)}
         self.vocab_size = len(unique_words)
 
@@ -57,8 +67,10 @@ class TFIDFRanker(BaseRanker):
         self.matrix = self._build_matrix()
 
     def _build_matrix(self):
+        """Compute DF counts and IDF vector, then delegate sparse matrix construction."""
         n_docs = len(self.tokenized_docs)
-        if n_docs == 0: return np.array([])
+        if n_docs == 0:
+            return sp.csr_matrix((0, 0))
 
         # Calculate Document Frequency (DF) for the whole corpus
         df_counts = np.zeros(self.vocab_size)
@@ -74,18 +86,22 @@ class TFIDFRanker(BaseRanker):
         idf_vector = self._idf_method.compute_all(df_counts, n_docs)
         self.idf_vector = idf_vector  # stored for use in score_docs
 
-        # Build TF matrix (N_docs x M_vocab)
-        matrix = np.zeros((n_docs, self.vocab_size))
+        return self._build_sparse_matrix(doc_counters, idf_vector, n_docs)
+
+    def _build_sparse_matrix(self, doc_counters, idf_vector, n_docs):
+        """Construct the sparse TF-IDF weight matrix from precomputed counters and IDF values."""
+        rows, cols, vals = [], [], []
         for i, counts in enumerate(doc_counters):
             doc_len = len(self.tokenized_docs[i])
-            if doc_len == 0: continue
-
-            # Use the Enum to get TF scores
+            if doc_len == 0:
+                continue
             tf_map = self._tf_method.compute_vector(counts, doc_len)
             for idx, tf_val in tf_map.items():
-                matrix[i, idx] = tf_val * idf_vector[idx]
+                rows.append(i)
+                cols.append(idx)
+                vals.append(tf_val * idf_vector[idx])
 
-        return matrix
+        return sp.csr_matrix((vals, (rows, cols)), shape=(n_docs, self.vocab_size))
 
     def score(self, query):
         """Calculates scores using dot product for maximum speed."""
@@ -99,17 +115,22 @@ class TFIDFRanker(BaseRanker):
         query_vec = np.zeros(self.vocab_size)
         query_vec[query_indices] = 1
 
-        # matrix (N x M) dot query_vec (M x 1) -> scores (N x 1)
-        return self.matrix.dot(query_vec)
+        # sparse matrix (N x M) dot query_vec (M,) -> scores (N,)
+        return np.asarray(self.matrix.dot(query_vec)).flatten()
 
     def rank(self, query, top_n=5):
+        """Return top_n documents ranked by TF-IDF score."""
         scores = self.score(query)
-        # Get indices of top scores efficiently
-        top_indices = np.argsort(scores)[::-1][:top_n]
+        n = len(scores)
+        if n <= top_n:
+            top_indices = np.argsort(scores)[::-1]
+        else:
+            part = np.argpartition(scores, -top_n)[-top_n:]
+            top_indices = part[np.argsort(scores[part])[::-1]]
 
         return [
             (round(float(scores[idx]), 4), self.corpus[idx])
-            for idx in top_indices if scores[idx] > 0
+            for idx in top_indices
         ]
 
     def score_docs(self, query, docs):

@@ -1,7 +1,11 @@
+"""Abstract base class for all rankers."""
+
 from abc import ABC, abstractmethod
 
 
 class BaseRanker(ABC):
+    """Base class defining the interface for all ranking models."""
+
     def __init__(self, corpus):
         self.corpus = corpus
 
@@ -28,6 +32,7 @@ class BaseRanker(ABC):
             List of (score, document) tuples sorted highest to lowest.
         """
 
+    @abstractmethod
     def score_docs(self, query, docs):
         """Score an arbitrary list of documents against a query.
 
@@ -42,4 +47,3 @@ class BaseRanker(ABC):
         Returns:
             List of floats, one score per document.
         """
-        raise NotImplementedError

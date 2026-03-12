@@ -1,30 +1,26 @@
 """
 build_dataset.py
 
-Builds the cleaned dataset from raw parquet files and saves it to data/.
-Output: data/shopping_queries_dataset_final.csv with columns:
+Builds the cleaned dataset from raw parquet files and saves it to data/processed/.
+Input:  data/raw/shopping_queries_dataset_examples.parquet
+        data/raw/shopping_queries_dataset_products.parquet
+Output: data/processed/shopping_queries_dataset_final.csv with columns:
     query_id, product_id, clean_query, clean_product_document, relevance_score, split
 """
 
-import re
 import html
-import pandas as pd
-import nltk
-from nltk.stem import WordNetLemmatizer
+import re
 from pathlib import Path
 
-nltk.download('wordnet', quiet=True)
+import pandas as pd
 
-DATA_DIR = Path(__file__).parent.parent / "data"
+from src.utils.normalize import lemmatizer, STOPWORDS
 
-STOPWORDS = {
-    'i', 'me', 'my', 'a', 'an', 'the', 'and', 'or', 'but', 'are',
-    'is', 'was', 'to', 'of', 'in', 'it', 'its', 'this', 'that',
-    'for', 'on', 'at', 'be', 'by', 'as', 'up', 'do', 'so', 'if', 's'
-}
+ROOT_DIR = Path(__file__).parent.parent
+RAW_DIR = ROOT_DIR / "data" / "raw"
+PROCESSED_DIR = ROOT_DIR / "data" / "processed"
 
-lemmatizer = WordNetLemmatizer()
-
+# ESCI relevance label mapping: Exact=1.0, Substitute=0.6, Irrelevant=0.1, Complement=0.0
 RELEVANCE_MAP = {
     'e': 1.0,
     's': 0.6,
@@ -34,6 +30,7 @@ RELEVANCE_MAP = {
 
 
 def clean_text(text):
+    """Unescape HTML, strip tags, lowercase, remove punctuation, and lemmatize."""
     text = html.unescape(str(text))
     text = re.sub(r'<.*?>|&nbsp;', ' ', text)
     text = text.lower()
@@ -44,9 +41,10 @@ def clean_text(text):
 
 
 def build():
+    """Load raw parquet files, clean text, and save the processed dataset."""
     print("Loading raw data...")
-    data_examples = pd.read_parquet(DATA_DIR / "shopping_queries_dataset_examples.parquet")
-    data_products = pd.read_parquet(DATA_DIR / "shopping_queries_dataset_products.parquet")
+    data_examples = pd.read_parquet(RAW_DIR / "shopping_queries_dataset_examples.parquet")
+    data_products = pd.read_parquet(RAW_DIR / "shopping_queries_dataset_products.parquet")
 
     print("Merging examples and products...")
     df = pd.merge(
@@ -61,7 +59,10 @@ def build():
     df = df[df['product_locale'] == 'us'].copy()
 
     print("Building product documents...")
-    for col in ['product_title', 'product_description', 'product_bullet_point', 'product_brand', 'product_color']:
+    for col in [
+        'product_title', 'product_description', 'product_bullet_point',
+        'product_brand', 'product_color'
+    ]:
         df[col] = df[col].fillna('')
 
     df['product_document'] = (
@@ -87,7 +88,8 @@ def build():
         'split',
     ]].copy()
 
-    output_path = DATA_DIR / "shopping_queries_dataset_final.csv"
+    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+    output_path = PROCESSED_DIR / "shopping_queries_dataset_final.csv"
     df_final.to_csv(output_path, index=False)
     print(f"Saved {len(df_final)} rows to {output_path}")
 
