@@ -67,6 +67,7 @@ class TFIDFRanker(BaseRanker):
         self.matrix = self._build_matrix()
 
     def _build_matrix(self):
+        """Compute DF counts and IDF vector, then delegate sparse matrix construction."""
         n_docs = len(self.tokenized_docs)
         if n_docs == 0:
             return sp.csr_matrix((0, 0))
@@ -85,7 +86,10 @@ class TFIDFRanker(BaseRanker):
         idf_vector = self._idf_method.compute_all(df_counts, n_docs)
         self.idf_vector = idf_vector  # stored for use in score_docs
 
-        # Build sparse TF-IDF matrix (N_docs x M_vocab)
+        return self._build_sparse_matrix(doc_counters, idf_vector, n_docs)
+
+    def _build_sparse_matrix(self, doc_counters, idf_vector, n_docs):
+        """Construct the sparse TF-IDF weight matrix from precomputed counters and IDF values."""
         rows, cols, vals = [], [], []
         for i, counts in enumerate(doc_counters):
             doc_len = len(self.tokenized_docs[i])

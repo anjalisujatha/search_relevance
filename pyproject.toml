@@ -18,3 +18,14 @@ dependencies = [
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["src*"]
+
+[tool.pylint.main]
+init-hook = """
+import sys, os
+venv_lib = os.path.join(os.getcwd(), '.venv', 'lib')
+if os.path.exists(venv_lib):
+    for entry in os.listdir(venv_lib):
+        site_pkgs = os.path.join(venv_lib, entry, 'site-packages')
+        if os.path.exists(site_pkgs):
+            sys.path.insert(0, site_pkgs)
+"""
